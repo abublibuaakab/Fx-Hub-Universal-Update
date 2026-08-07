@@ -1,0 +1,1024 @@
+setclipboard("https://discord.com/invite/mB9FhGUJS8")
+
+local RunService = game:GetService("RunService")
+local Camera = workspace.CurrentCamera
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local LocalPlayer = Players.LocalPlayer
+
+local StaffList = {"SintoniaHolder", "SintoniaHolder2"}
+local GrupoSintoniaID = 852768955
+
+local function IsStaffPlayer(p)
+    if p.Team and p.Team.Name == "STAFF" then return true end
+    if table.find(StaffList, p.Name) then return true end
+    local ok, rank = pcall(function() return p:GetRoleInGroup(GrupoSintoniaID) end)
+    if ok and rank and rank:lower():find("staff") then return true end
+    local ok2, rankN = pcall(function() return p:GetRankInGroup(GrupoSintoniaID) end)
+    if ok2 and rankN and rankN > 1 then return true end
+    return false
+end
+
+local AimbotEnabled = false
+local SilentAimEnabled = false
+local IgnorarADM = false
+local TargetPart = "Head"
+local TeamCheck = false
+local WallCheck = true
+local KillCheck = true
+local FOVRadius = 100
+local FOVColor = Color3.fromRGB(0,255,0)
+local IgnoredPlayers = {}
+local PriorizarJogadores = {}
+local PriorizarMenosVida = false
+local PriorizarMaisPerto = false
+local OcultarFOV = false
+local FOVColorido = false
+local FOVColoridoHue = 0
+local SilentHitChance = 100
+local TirosAntesDaCabeca = 0
+local TirosDisparados = 0
+local SafezoneCheckAimbot = false
+local SafezoneCheckSilentAim = false
+local SafezoneCheckKillaura = false
+
+local FOVCircle = Drawing.new("Circle")
+FOVCircle.Filled = false
+FOVCircle.Thickness = 1.5
+FOVCircle.Visible = false
+
+local function CheckSafeZone(alvo)
+    if not alvo or not alvo.Character then return false end
+    if alvo.Character:FindFirstChildOfClass("ForceField") then return true end
+    if alvo:GetAttribute("SafeZone") or alvo.Character:GetAttribute("SafeZone") then return true end
+    return false
+end
+
+local function EstaVisivel(alvo)
+    local pecas = Camera:GetPartsObscuringTarget({Camera.CFrame.Position, alvo.Position}, {LocalPlayer.Character, alvo.Parent})
+    return #pecas == 0
+end
+
+local function GetClosestTarget()
+    local target = nil
+    local bestScore = math.huge
+    local shortestDist = FOVRadius
+    local Center = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
+    local prioTarget = nil
+    local prioScore = math.huge
+    for _, p in pairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer and p.Character and not table.find(IgnoredPlayers, p.Name) and not (IgnorarADM and IsStaffPlayer(p)) then
+            if SafezoneCheckAimbot and CheckSafeZone(p) then continue end
+            local part = p.Character:FindFirstChild(TargetPart)
+            local hum = p.Character:FindFirstChild("Humanoid")
+            if part and hum and (not KillCheck or hum.Health > 0) then
+                if TeamCheck and p.Team == LocalPlayer.Team then continue end
+                local pos, onScreen = Camera:WorldToViewportPoint(part.Position)
+                if onScreen then
+                    if WallCheck and not EstaVisivel(part) then continue end
+                    local magnitude = (Vector2.new(pos.X,pos.Y) - Center).Magnitude
+                    if magnitude > FOVRadius then continue end
+                    local score = magnitude
+                    if PriorizarMenosVida and not PriorizarMaisPerto then
+                        score = hum.Health
+                    elseif PriorizarMaisPerto and not PriorizarMenosVida then
+                        score = (part.Position - Camera.CFrame.Position).Magnitude
+                    elseif PriorizarMenosVida and PriorizarMaisPerto then
+                        local worldDist = (part.Position - Camera.CFrame.Position).Magnitude
+                        score = (hum.Health / math.max(hum.MaxHealth, 1)) * worldDist
+                    end
+                    if table.find(PriorizarJogadores, p.Name) then
+                        if score < prioScore then prioTarget = part; prioScore = score end
+                    else
+                        if score < bestScore then target = part; bestScore = score; shortestDist = magnitude end
+                    end
+                end
+            end
+        end
+    end
+    return prioTarget or target
+end
+
+local function GetSilentTarget(targetPartName)
+    targetPartName = targetPartName or TargetPart
+    local char = LocalPlayer.Character
+    if not char then return nil end
+    local root = char:FindFirstChild("HumanoidRootPart")
+    if not root then return nil end
+    local Center = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
+    local target = nil
+    local prioTarget = nil
+    local bestScore = math.huge
+    local prioScore = math.huge
+    for _, p in pairs(Players:GetPlayers()) do
+        if p == LocalPlayer then continue end
+        if not p.Character then continue end
+        if table.find(IgnoredPlayers, p.Name) then continue end
+        if IgnorarADM and IsStaffPlayer(p) then continue end
+        if TeamCheck and p.Team == LocalPlayer.Team then continue end
+        if SafezoneCheckSilentAim and CheckSafeZone(p) then continue end
+        local part = p.Character:FindFirstChild(targetPartName)
+        local hum = p.Character:FindFirstChild("Humanoid")
+        if not part or not hum then continue end
+        if KillCheck and hum.Health <= 0 then continue end
+        local pos, onScreen = Camera:WorldToViewportPoint(part.Position)
+        if not onScreen then continue end
+        if WallCheck and not EstaVisivel(part) then continue end
+        local magnitude = (Vector2.new(pos.X, pos.Y) - Center).Magnitude
+        if magnitude > FOVRadius then continue end
+        local score = magnitude
+        if PriorizarMenosVida and not PriorizarMaisPerto then
+            score = hum.Health
+        elseif PriorizarMaisPerto and not PriorizarMenosVida then
+            score = (part.Position - Camera.CFrame.Position).Magnitude
+        elseif PriorizarMenosVida and PriorizarMaisPerto then
+            local worldDist = (part.Position - Camera.CFrame.Position).Magnitude
+            score = (hum.Health / math.max(hum.MaxHealth, 1)) * worldDist
+        end
+        if table.find(PriorizarJogadores, p.Name) then
+            if score < prioScore then prioTarget = part; prioScore = score end
+        else
+            if score < bestScore then target = part; bestScore = score end
+        end
+    end
+    return prioTarget or target
+end
+
+local success_sa, result_sa = pcall(function()
+    local RS = game:GetService("ReplicatedStorage")
+    local OrpheusShared = RS:WaitForChild("OrpheusShared", 10)
+    if not OrpheusShared then return end
+    local Framework = OrpheusShared:WaitForChild("GunSys", 10)
+    and OrpheusShared.GunSys:WaitForChild("Framework", 10)
+    if not Framework then return end
+    local WRC = Framework:WaitForChild("WeaponRaycastController", 10)
+    if not WRC then return end
+    local a = require(WRC)
+    local b = clonefunction(a.PerformRaycast)
+    a.PerformRaycast = newcclosure(function(c, d, e)
+        if not SilentAimEnabled then return b(c, d, e) end
+        
+        if math.random(1, 100) > SilentHitChance then
+            return b(c, d, e)
+        end
+        
+        local effectivePart = TargetPart
+        if TirosAntesDaCabeca > 0 then
+            if TirosDisparados < TirosAntesDaCabeca then
+                effectivePart = "HumanoidRootPart"
+            else
+                effectivePart = "Head"
+            end
+            TirosDisparados = TirosDisparados + 1
+            if TirosDisparados >= 30 then
+                TirosDisparados = 0
+            end
+        end
+        
+        local h = GetSilentTarget(effectivePart)
+        if not h then return b(c, d, e) end
+        local f = LocalPlayer.Character
+        local g = f and f:FindFirstChild("HumanoidRootPart")
+        if not g then return b(c, d, e) end
+        local n = c.Config and c.Config.Spread or 0
+        return h, h.Position,
+        (g.Position - h.Position).Unit,
+        (CFrame.new(workspace.CurrentCamera.Focus.Position,
+        workspace.CurrentCamera.CFrame.LookVector * 500)
+        * CFrame.Angles(
+        math.rad(-n + math.random() * (n * 2)),
+        math.rad(-n + math.random() * (n * 2)),
+        0)).LookVector
+    end)
+end)
+
+RunService.RenderStepped:Connect(function()
+    if FOVColorido then
+        FOVColoridoHue = (FOVColoridoHue + 0.005) % 1
+        FOVColor = Color3.fromHSV(FOVColoridoHue, 1, 1)
+    end
+    FOVCircle.Visible = (AimbotEnabled or SilentAimEnabled) and not OcultarFOV
+    FOVCircle.Radius = FOVRadius
+    FOVCircle.Position = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
+    FOVCircle.Color = FOVColor
+    if AimbotEnabled then
+        local Target = GetClosestTarget()
+        if Target then Camera.CFrame = CFrame.new(Camera.CFrame.Position, Target.Position) end
+    end
+end)
+
+local KillAuraAtiva = false
+local DistanciaAura = 100
+local TempoEntreTiros = 0.2
+local UltimoTiro = 0
+
+RunService.RenderStepped:Connect(function()
+    if not KillAuraAtiva then return end
+    if tick() - UltimoTiro < TempoEntreTiros then return end
+
+    local meuPersonagem = LocalPlayer.Character
+    if not meuPersonagem or not meuPersonagem:FindFirstChild("HumanoidRootPart") then return end
+    
+    local temArma = meuPersonagem:FindFirstChildWhichIsA("Tool")
+    if not temArma then return end
+
+    local minhaPosicao = meuPersonagem.HumanoidRootPart.Position
+
+    for _, jogador in pairs(Players:GetPlayers()) do
+        if jogador ~= LocalPlayer and jogador.Character then
+            if SafezoneCheckKillaura and CheckSafeZone(jogador) then continue end
+            local alvoHumanoid = jogador.Character:FindFirstChild("Humanoid")
+            local alvoHead = jogador.Character:FindFirstChild("Head")
+            local alvoRoot = jogador.Character:FindFirstChild("HumanoidRootPart")
+
+            if alvoHumanoid and alvoHead and alvoRoot and alvoHumanoid.Health > 0 then
+                local distancia = (minhaPosicao - alvoRoot.Position).Magnitude
+
+                if distancia <= DistanciaAura then
+                    UltimoTiro = tick() 
+                    
+                    pcall(function()
+                        local Sucesso, Network = pcall(function()
+                            return require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("ModuleRequiring"))("Network")
+                        end)
+                        if Sucesso and Network then
+                            Network:Send("HitDeArma", alvoHumanoid, alvoHead, 50, Vector3.new(0,0,0), 0, 0)
+                        else
+                            if temArma:FindFirstChild("OrpheusGunServer") and temArma.OrpheusGunServer:FindFirstChild("InflictTarget") then
+                                temArma.OrpheusGunServer.InflictTarget:FireServer(alvoHumanoid, alvoHead, 50, Vector3.new(0,0,0), 0, 0)
+                            end
+                        end
+                    end)
+                    break 
+                end
+            end
+        end
+    end
+end)
+
+local PVP_Settings = {}
+PVP_Settings.NoSlowdown = false
+PVP_Settings.ExplosiveBullets = false
+
+local GunModsAtivos = {
+    RapidFire = false,
+    MunicaoInfinita = false
+}
+
+task.spawn(function()
+    while task.wait(1) do
+        pcall(function()
+            for _, v in pairs(getgc(true)) do
+                if type(v) == "table" and rawget(v, "FireRate") then
+                    if GunModsAtivos.RapidFire then
+                        rawset(v, "FireRate", 0.05)
+                    end
+                    if GunModsAtivos.MunicaoInfinita then
+                        rawset(v, "MaxAmmo", 9999)
+                        rawset(v, "Ammo", 9999)
+                        rawset(v, "ClipSize", 9999)
+                        rawset(v, "CurrentAmmo", 9999)
+                    end
+                end
+            end
+        end)
+    end
+end)
+
+local ScreenGuiSilent = Instance.new("ScreenGui")
+ScreenGuiSilent.Name = "EliteSilent"
+ScreenGuiSilent.ResetOnSpawn = false
+ScreenGuiSilent.Parent = game:GetService("CoreGui")
+
+local FrameSilent = Instance.new("Frame")
+FrameSilent.Size = UDim2.new(0, 170, 0, 60)
+FrameSilent.Position = UDim2.new(0.5, -85, 0.68, 0)
+FrameSilent.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+FrameSilent.BorderSizePixel = 0
+FrameSilent.Active = true
+FrameSilent.Draggable = true
+FrameSilent.Parent = ScreenGuiSilent
+
+local UICornerSilent = Instance.new("UICorner")
+UICornerSilent.CornerRadius = UDim.new(0, 10)
+UICornerSilent.Parent = FrameSilent
+
+local GradientSilent = Instance.new("UIGradient")
+GradientSilent.Color = ColorSequence.new({
+	ColorSequenceKeypoint.new(0, Color3.fromRGB(180, 20, 20)),
+	ColorSequenceKeypoint.new(1, Color3.fromRGB(10, 10, 10))
+})
+GradientSilent.Rotation = 45
+GradientSilent.Parent = FrameSilent
+
+local TitleSilent = Instance.new("TextLabel")
+TitleSilent.Size = UDim2.new(1, -50, 0, 20)
+TitleSilent.Position = UDim2.new(0, 8, 0, 2)
+TitleSilent.BackgroundTransparency = 1
+TitleSilent.Text = "SILENT AIM"
+TitleSilent.TextColor3 = Color3.fromRGB(255, 255, 255)
+TitleSilent.Font = Enum.Font.GothamBlack
+TitleSilent.TextSize = 13
+TitleSilent.TextXAlignment = Enum.TextXAlignment.Left
+TitleSilent.Parent = FrameSilent
+
+local TitleGradSilent = Instance.new("UIGradient")
+TitleGradSilent.Color = ColorSequence.new({
+	ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 40, 40)),
+	ColorSequenceKeypoint.new(1, Color3.fromRGB(30, 30, 30))
+})
+TitleGradSilent.Parent = TitleSilent
+
+local LockBtnSilent = Instance.new("TextButton")
+LockBtnSilent.Size = UDim2.new(0, 22, 0, 22)
+LockBtnSilent.Position = UDim2.new(1, -48, 0, 4)
+LockBtnSilent.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+LockBtnSilent.Text = "🔓"
+LockBtnSilent.TextSize = 12
+LockBtnSilent.Font = Enum.Font.GothamBlack
+LockBtnSilent.TextColor3 = Color3.fromRGB(255, 255, 255)
+LockBtnSilent.Parent = FrameSilent
+
+local LockCornerSilent = Instance.new("UICorner")
+LockCornerSilent.CornerRadius = UDim.new(0, 6)
+LockCornerSilent.Parent = LockBtnSilent
+
+local CloseBtnSilent = Instance.new("TextButton")
+CloseBtnSilent.Size = UDim2.new(0, 22, 0, 22)
+CloseBtnSilent.Position = UDim2.new(1, -24, 0, 4)
+CloseBtnSilent.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+CloseBtnSilent.Text = "X"
+CloseBtnSilent.TextSize = 12
+CloseBtnSilent.Font = Enum.Font.GothamBlack
+CloseBtnSilent.TextColor3 = Color3.fromRGB(255, 80, 80)
+CloseBtnSilent.Parent = FrameSilent
+
+local CloseCornerSilent = Instance.new("UICorner")
+CloseCornerSilent.CornerRadius = UDim.new(0, 6)
+CloseCornerSilent.Parent = CloseBtnSilent
+
+local ToggleSilent = Instance.new("TextButton")
+ToggleSilent.Size = UDim2.new(0.88, 0, 0, 26)
+ToggleSilent.Position = UDim2.new(0.06, 0, 0, 28)
+ToggleSilent.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+ToggleSilent.Text = "OFF"
+ToggleSilent.TextColor3 = Color3.fromRGB(255, 255, 255)
+ToggleSilent.Font = Enum.Font.GothamBlack
+ToggleSilent.TextSize = 13
+ToggleSilent.Parent = FrameSilent
+
+local ToggleCornerSilent = Instance.new("UICorner")
+ToggleCornerSilent.CornerRadius = UDim.new(0, 7)
+ToggleCornerSilent.Parent = ToggleSilent
+
+local ToggleGradSilent = Instance.new("UIGradient")
+ToggleGradSilent.Color = ColorSequence.new({
+	ColorSequenceKeypoint.new(0, Color3.fromRGB(160, 25, 25)),
+	ColorSequenceKeypoint.new(1, Color3.fromRGB(20, 20, 20))
+})
+ToggleGradSilent.Parent = ToggleSilent
+
+local LockedSilent = false
+
+ToggleSilent.MouseButton1Click:Connect(function()
+	SilentAimEnabled = not SilentAimEnabled
+	if SilentAimEnabled then
+		ToggleSilent.Text = "ON"
+		ToggleGradSilent.Color = ColorSequence.new({
+			ColorSequenceKeypoint.new(0, Color3.fromRGB(30, 180, 60)),
+			ColorSequenceKeypoint.new(1, Color3.fromRGB(10, 40, 15))
+		})
+	else
+		ToggleSilent.Text = "OFF"
+		ToggleGradSilent.Color = ColorSequence.new({
+			ColorSequenceKeypoint.new(0, Color3.fromRGB(160, 25, 25)),
+			ColorSequenceKeypoint.new(1, Color3.fromRGB(20, 20, 20))
+		})
+	end
+end)
+
+LockBtnSilent.MouseButton1Click:Connect(function()
+	LockedSilent = not LockedSilent
+	FrameSilent.Draggable = not LockedSilent
+	if LockedSilent then
+		LockBtnSilent.Text = "🔒"
+	else
+		LockBtnSilent.Text = "🔓"
+	end
+end)
+
+local function CreateConfirmSilent()
+	local ConfirmGui = Instance.new("Frame")
+	ConfirmGui.Size = UDim2.new(0, 220, 0, 110)
+	ConfirmGui.Position = UDim2.new(0.5, -110, 0.5, -55)
+	ConfirmGui.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+	ConfirmGui.BorderSizePixel = 0
+	ConfirmGui.Parent = ScreenGuiSilent
+
+	local ConfirmCorner = Instance.new("UICorner")
+	ConfirmCorner.CornerRadius = UDim.new(0, 12)
+	ConfirmCorner.Parent = ConfirmGui
+
+	local ConfirmGrad = Instance.new("UIGradient")
+	ConfirmGrad.Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, Color3.fromRGB(180, 20, 20)),
+		ColorSequenceKeypoint.new(1, Color3.fromRGB(10, 10, 10))
+	})
+	ConfirmGrad.Rotation = 45
+	ConfirmGrad.Parent = ConfirmGui
+
+	local ConfirmTitle = Instance.new("TextLabel")
+	ConfirmTitle.Size = UDim2.new(1, 0, 0, 30)
+	ConfirmTitle.Position = UDim2.new(0, 0, 0, 10)
+	ConfirmTitle.BackgroundTransparency = 1
+	ConfirmTitle.Text = "Delete Button?"
+	ConfirmTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
+	ConfirmTitle.Font = Enum.Font.GothamBlack
+	ConfirmTitle.TextSize = 16
+	ConfirmTitle.Parent = ConfirmGui
+
+	local ConfirmTitleGrad = Instance.new("UIGradient")
+	ConfirmTitleGrad.Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 40, 40)),
+		ColorSequenceKeypoint.new(1, Color3.fromRGB(30, 30, 30))
+	})
+	ConfirmTitleGrad.Parent = ConfirmTitle
+
+	local ConfirmBtn = Instance.new("TextButton")
+	ConfirmBtn.Size = UDim2.new(0, 90, 0, 32)
+	ConfirmBtn.Position = UDim2.new(0, 15, 0, 55)
+	ConfirmBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+	ConfirmBtn.Text = "Confirm"
+	ConfirmBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+	ConfirmBtn.Font = Enum.Font.GothamBlack
+	ConfirmBtn.TextSize = 13
+	ConfirmBtn.Parent = ConfirmGui
+
+	local ConfirmBtnCorner = Instance.new("UICorner")
+	ConfirmBtnCorner.CornerRadius = UDim.new(0, 8)
+	ConfirmBtnCorner.Parent = ConfirmBtn
+
+	local ConfirmBtnGrad = Instance.new("UIGradient")
+	ConfirmBtnGrad.Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, Color3.fromRGB(30, 180, 60)),
+		ColorSequenceKeypoint.new(1, Color3.fromRGB(10, 40, 15))
+	})
+	ConfirmBtnGrad.Parent = ConfirmBtn
+
+	local CancelBtn = Instance.new("TextButton")
+	CancelBtn.Size = UDim2.new(0, 90, 0, 32)
+	CancelBtn.Position = UDim2.new(0, 115, 0, 55)
+	CancelBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+	CancelBtn.Text = "Cancel"
+	CancelBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+	CancelBtn.Font = Enum.Font.GothamBlack
+	CancelBtn.TextSize = 13
+	CancelBtn.Parent = ConfirmGui
+
+	local CancelBtnCorner = Instance.new("UICorner")
+	CancelBtnCorner.CornerRadius = UDim.new(0, 8)
+	CancelBtnCorner.Parent = CancelBtn
+
+	local CancelBtnGrad = Instance.new("UIGradient")
+	CancelBtnGrad.Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, Color3.fromRGB(160, 25, 25)),
+		ColorSequenceKeypoint.new(1, Color3.fromRGB(20, 20, 20))
+	})
+	CancelBtnGrad.Parent = CancelBtn
+
+	ConfirmBtn.MouseButton1Click:Connect(function()
+		ScreenGuiSilent:Destroy()
+	end)
+
+	CancelBtn.MouseButton1Click:Connect(function()
+		ConfirmGui:Destroy()
+	end)
+end
+
+CloseBtnSilent.MouseButton1Click:Connect(function()
+	CreateConfirmSilent()
+end)
+
+local ScreenGuiAim = Instance.new("ScreenGui")
+ScreenGuiAim.Name = "EliteAim"
+ScreenGuiAim.ResetOnSpawn = false
+ScreenGuiAim.Parent = game:GetService("CoreGui")
+
+local FrameAim = Instance.new("Frame")
+FrameAim.Size = UDim2.new(0, 170, 0, 60)
+FrameAim.Position = UDim2.new(0.5, -85, 0.75, 0)
+FrameAim.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+FrameAim.BorderSizePixel = 0
+FrameAim.Active = true
+FrameAim.Draggable = true
+FrameAim.Parent = ScreenGuiAim
+
+local UICornerAim = Instance.new("UICorner")
+UICornerAim.CornerRadius = UDim.new(0, 10)
+UICornerAim.Parent = FrameAim
+
+local GradientAim = Instance.new("UIGradient")
+GradientAim.Color = ColorSequence.new({
+	ColorSequenceKeypoint.new(0, Color3.fromRGB(180, 20, 20)),
+	ColorSequenceKeypoint.new(1, Color3.fromRGB(10, 10, 10))
+})
+GradientAim.Rotation = 45
+GradientAim.Parent = FrameAim
+
+local TitleAim = Instance.new("TextLabel")
+TitleAim.Size = UDim2.new(1, -50, 0, 20)
+TitleAim.Position = UDim2.new(0, 8, 0, 2)
+TitleAim.BackgroundTransparency = 1
+TitleAim.Text = "AIMBOT"
+TitleAim.TextColor3 = Color3.fromRGB(255, 255, 255)
+TitleAim.Font = Enum.Font.GothamBlack
+TitleAim.TextSize = 14
+TitleAim.TextXAlignment = Enum.TextXAlignment.Left
+TitleAim.Parent = FrameAim
+
+local TitleGradAim = Instance.new("UIGradient")
+TitleGradAim.Color = ColorSequence.new({
+	ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 40, 40)),
+	ColorSequenceKeypoint.new(1, Color3.fromRGB(30, 30, 30))
+})
+TitleGradAim.Parent = TitleAim
+
+local LockBtnAim = Instance.new("TextButton")
+LockBtnAim.Size = UDim2.new(0, 22, 0, 22)
+LockBtnAim.Position = UDim2.new(1, -48, 0, 4)
+LockBtnAim.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+LockBtnAim.Text = "🔓"
+LockBtnAim.TextSize = 12
+LockBtnAim.Font = Enum.Font.GothamBlack
+LockBtnAim.TextColor3 = Color3.fromRGB(255, 255, 255)
+LockBtnAim.Parent = FrameAim
+
+local LockCornerAim = Instance.new("UICorner")
+LockCornerAim.CornerRadius = UDim.new(0, 6)
+LockCornerAim.Parent = LockBtnAim
+
+local CloseBtnAim = Instance.new("TextButton")
+CloseBtnAim.Size = UDim2.new(0, 22, 0, 22)
+CloseBtnAim.Position = UDim2.new(1, -24, 0, 4)
+CloseBtnAim.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+CloseBtnAim.Text = "X"
+CloseBtnAim.TextSize = 12
+CloseBtnAim.Font = Enum.Font.GothamBlack
+CloseBtnAim.TextColor3 = Color3.fromRGB(255, 80, 80)
+CloseBtnAim.Parent = FrameAim
+
+local CloseCornerAim = Instance.new("UICorner")
+CloseCornerAim.CornerRadius = UDim.new(0, 6)
+CloseCornerAim.Parent = CloseBtnAim
+
+local ToggleAim = Instance.new("TextButton")
+ToggleAim.Size = UDim2.new(0.88, 0, 0, 26)
+ToggleAim.Position = UDim2.new(0.06, 0, 0, 28)
+ToggleAim.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+ToggleAim.Text = "OFF"
+ToggleAim.TextColor3 = Color3.fromRGB(255, 255, 255)
+ToggleAim.Font = Enum.Font.GothamBlack
+ToggleAim.TextSize = 13
+ToggleAim.Parent = FrameAim
+
+local ToggleCornerAim = Instance.new("UICorner")
+ToggleCornerAim.CornerRadius = UDim.new(0, 7)
+ToggleCornerAim.Parent = ToggleAim
+
+local ToggleGradAim = Instance.new("UIGradient")
+ToggleGradAim.Color = ColorSequence.new({
+	ColorSequenceKeypoint.new(0, Color3.fromRGB(160, 25, 25)),
+	ColorSequenceKeypoint.new(1, Color3.fromRGB(20, 20, 20))
+})
+ToggleGradAim.Parent = ToggleAim
+
+local LockedAim = false
+
+ToggleAim.MouseButton1Click:Connect(function()
+	AimbotEnabled = not AimbotEnabled
+	if AimbotEnabled then
+		ToggleAim.Text = "ON"
+		ToggleGradAim.Color = ColorSequence.new({
+			ColorSequenceKeypoint.new(0, Color3.fromRGB(30, 180, 60)),
+			ColorSequenceKeypoint.new(1, Color3.fromRGB(10, 40, 15))
+		})
+	else
+		ToggleAim.Text = "OFF"
+		ToggleGradAim.Color = ColorSequence.new({
+			ColorSequenceKeypoint.new(0, Color3.fromRGB(160, 25, 25)),
+			ColorSequenceKeypoint.new(1, Color3.fromRGB(20, 20, 20))
+		})
+	end
+end)
+
+LockBtnAim.MouseButton1Click:Connect(function()
+	LockedAim = not LockedAim
+	FrameAim.Draggable = not LockedAim
+	if LockedAim then
+		LockBtnAim.Text = "🔒"
+	else
+		LockBtnAim.Text = "🔓"
+	end
+end)
+
+local function CreateConfirmAim()
+	local ConfirmGui = Instance.new("Frame")
+	ConfirmGui.Size = UDim2.new(0, 220, 0, 110)
+	ConfirmGui.Position = UDim2.new(0.5, -110, 0.5, -55)
+	ConfirmGui.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+	ConfirmGui.BorderSizePixel = 0
+	ConfirmGui.Parent = ScreenGuiAim
+
+	local ConfirmCorner = Instance.new("UICorner")
+	ConfirmCorner.CornerRadius = UDim.new(0, 12)
+	ConfirmCorner.Parent = ConfirmGui
+
+	local ConfirmGrad = Instance.new("UIGradient")
+	ConfirmGrad.Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, Color3.fromRGB(180, 20, 20)),
+		ColorSequenceKeypoint.new(1, Color3.fromRGB(10, 10, 10))
+	})
+	ConfirmGrad.Rotation = 45
+	ConfirmGrad.Parent = ConfirmGui
+
+	local ConfirmTitle = Instance.new("TextLabel")
+	ConfirmTitle.Size = UDim2.new(1, 0, 0, 30)
+	ConfirmTitle.Position = UDim2.new(0, 0, 0, 10)
+	ConfirmTitle.BackgroundTransparency = 1
+	ConfirmTitle.Text = "Delete Button?"
+	ConfirmTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
+	ConfirmTitle.Font = Enum.Font.GothamBlack
+	ConfirmTitle.TextSize = 16
+	ConfirmTitle.Parent = ConfirmGui
+
+	local ConfirmTitleGrad = Instance.new("UIGradient")
+	ConfirmTitleGrad.Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 40, 40)),
+		ColorSequenceKeypoint.new(1, Color3.fromRGB(30, 30, 30))
+	})
+	ConfirmTitleGrad.Parent = ConfirmTitle
+
+	local ConfirmBtn = Instance.new("TextButton")
+	ConfirmBtn.Size = UDim2.new(0, 90, 0, 32)
+	ConfirmBtn.Position = UDim2.new(0, 15, 0, 55)
+	ConfirmBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+	ConfirmBtn.Text = "Confirm"
+	ConfirmBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+	ConfirmBtn.Font = Enum.Font.GothamBlack
+	ConfirmBtn.TextSize = 13
+	ConfirmBtn.Parent = ConfirmGui
+
+	local ConfirmBtnCorner = Instance.new("UICorner")
+	ConfirmBtnCorner.CornerRadius = UDim.new(0, 8)
+	ConfirmBtnCorner.Parent = ConfirmBtn
+
+	local ConfirmBtnGrad = Instance.new("UIGradient")
+	ConfirmBtnGrad.Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, Color3.fromRGB(30, 180, 60)),
+		ColorSequenceKeypoint.new(1, Color3.fromRGB(10, 40, 15))
+	})
+	ConfirmBtnGrad.Parent = ConfirmBtn
+
+	local CancelBtn = Instance.new("TextButton")
+	CancelBtn.Size = UDim2.new(0, 90, 0, 32)
+	CancelBtn.Position = UDim2.new(0, 115, 0, 55)
+	CancelBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+	CancelBtn.Text = "Cancel"
+	CancelBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+	CancelBtn.Font = Enum.Font.GothamBlack
+	CancelBtn.TextSize = 13
+	CancelBtn.Parent = ConfirmGui
+
+	local CancelBtnCorner = Instance.new("UICorner")
+	CancelBtnCorner.CornerRadius = UDim.new(0, 8)
+	CancelBtnCorner.Parent = CancelBtn
+
+	local CancelBtnGrad = Instance.new("UIGradient")
+	CancelBtnGrad.Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, Color3.fromRGB(160, 25, 25)),
+		ColorSequenceKeypoint.new(1, Color3.fromRGB(20, 20, 20))
+	})
+	CancelBtnGrad.Parent = CancelBtn
+
+	ConfirmBtn.MouseButton1Click:Connect(function()
+		ScreenGuiAim:Destroy()
+	end)
+
+	CancelBtn.MouseButton1Click:Connect(function()
+		ConfirmGui:Destroy()
+	end)
+end
+
+CloseBtnAim.MouseButton1Click:Connect(function()
+	CreateConfirmAim()
+end)
+
+local redzlib = loadstring(game:HttpGet("https://raw.githubusercontent.com/minhdepzai-v/LibraryRobloc/refs/heads/main/RedzLibrary.lua"))()
+
+local Window = redzlib:MakeWindow({
+  Title = "Fx Hub | Sintonia Rp",
+  SubTitle = "TikTok: Alex.cx10q | Discord: https://discord.com/invite/mB9FhGUJS8",
+  SaveFolder = "FxHubSintonia"
+})
+
+Window:AddMinimizeButton({
+    Button = { Image = "rbxassetid://125047611002870", BackgroundTransparency = 0 },
+    Corner = { CornerRadius = UDim.new(35, 1) },
+})
+
+local TabPVP = Window:MakeTab({"PVP", "crosshair"})
+Window:SelectTab(TabPVP)
+
+TabPVP:AddButton({"Copy Discord", function()
+    setclipboard("https://discord.com/invite/mB9FhGUJS8")
+end})
+
+TabPVP:AddButton({"Copy TikTok", function()
+    setclipboard("Alex.cx10q")
+end})
+
+TabPVP:AddToggle({
+  Name = "Aimbot",
+  Default = false,
+  Callback = function(v)
+      AimbotEnabled = v
+  end
+})
+
+TabPVP:AddToggle({
+  Name = "Silent Aim",
+  Default = false,
+  Callback = function(v)
+      SilentAimEnabled = v
+  end
+})
+
+TabPVP:AddToggle({
+  Name = "Kill Aura",
+  Default = false,
+  Callback = function(v)
+      KillAuraAtiva = v
+  end
+})
+
+TabPVP:AddSlider({
+  Name = "Distancia Kill Aura",
+  Min = 10,
+  Max = 500,
+  Increase = 1,
+  Default = 100,
+  Callback = function(v)
+      DistanciaAura = v
+  end
+})
+
+TabPVP:AddToggle({
+  Name = "Safezone Check Aimbot",
+  Default = false,
+  Callback = function(v)
+      SafezoneCheckAimbot = v
+  end
+})
+
+TabPVP:AddToggle({
+  Name = "Safezone Check Silent Aim",
+  Default = false,
+  Callback = function(v)
+      SafezoneCheckSilentAim = v
+  end
+})
+
+TabPVP:AddToggle({
+  Name = "Safezone Check Killaura",
+  Default = false,
+  Callback = function(v)
+      SafezoneCheckKillaura = v
+  end
+})
+
+TabPVP:AddToggle({
+  Name = "No Slowdown",
+  Default = false,
+  Callback = function(Value)
+      PVP_Settings.NoSlowdown = Value
+      if Value then
+          task.spawn(function()
+              while PVP_Settings.NoSlowdown do
+                  task.wait(0.2)
+                  pcall(function()
+                      local char = LocalPlayer.Character
+                      if char then
+                          for _, tool in pairs(char:GetChildren()) do
+                              if tool:IsA("Tool") then
+                                  local cfg = tool:FindFirstChild("Cfg")
+                                  if cfg then
+                                      local mod = require(cfg)
+                                      if mod and mod.WalkSpeedRedutionEnabled then
+                                          mod.WalkSpeedRedutionEnabled = false
+                                          mod.WalkSpeedRedution = 0
+                                      end
+                                  end
+                              end
+                          end
+                      end
+                  end)
+              end
+          end)
+      end
+  end
+})
+
+TabPVP:AddToggle({
+  Name = "Explosive Bullets",
+  Default = false,
+  Callback = function(Value)
+      PVP_Settings.ExplosiveBullets = Value
+      if Value then
+          task.spawn(function()
+              while PVP_Settings.ExplosiveBullets do
+                  task.wait(0.5)
+                  pcall(function()
+                      local tool = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Tool")
+                      if tool then
+                          local cfg = tool:FindFirstChild("Cfg")
+                          if cfg then
+                              local mod = require(cfg)
+                              if mod then
+                                  mod.ExplosiveEnabled = true
+                                  mod.Radius = 15
+                                  mod.BlastPressure = 50000
+                              end
+                          end
+                      end
+                  end)
+              end
+          end)
+      else
+          pcall(function()
+              local tool = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Tool")
+              if tool then
+                  local cfg = tool:FindFirstChild("Cfg")
+                  if cfg then
+                      local mod = require(cfg)
+                      if mod then
+                          mod.ExplosiveEnabled = false
+                      end
+                  end
+              end
+          end)
+      end
+  end
+})
+
+TabPVP:AddToggle({
+  Name = "Ignorar ADM",
+  Default = false,
+  Callback = function(v)
+      IgnorarADM = v
+  end
+})
+
+TabPVP:AddToggle({
+  Name = "Rapid Fire",
+  Default = false,
+  Callback = function(v)
+      GunModsAtivos.RapidFire = v
+  end
+})
+
+TabPVP:AddToggle({
+  Name = "Municao Infinita",
+  Default = false,
+  Callback = function(v)
+      GunModsAtivos.MunicaoInfinita = v
+  end
+})
+
+TabPVP:AddDropdown({
+  Name = "Focar em",
+  Options = {"Head","HumanoidRootPart"},
+  Default = "Head",
+  Callback = function(Option)
+      TargetPart = Option
+  end
+})
+
+TabPVP:AddSlider({
+  Name = "Hit Chance",
+  Min = 0,
+  Max = 100,
+  Increase = 1,
+  Default = 100,
+  Callback = function(v)
+      SilentHitChance = v
+  end
+})
+
+TabPVP:AddSlider({
+  Name = "Tiros no Corpo antes da Cabeca",
+  Min = 0,
+  Max = 29,
+  Increase = 1,
+  Default = 0,
+  Callback = function(v)
+      TirosAntesDaCabeca = v
+  end
+})
+
+TabPVP:AddToggle({
+  Name = "Ignorar Paredes",
+  Default = true,
+  Callback = function(v)
+      WallCheck = v
+  end
+})
+
+TabPVP:AddToggle({
+  Name = "Ignorar Mortos",
+  Default = true,
+  Callback = function(v)
+      KillCheck = v
+  end
+})
+
+TabPVP:AddToggle({
+  Name = "Ignorar Amigos",
+  Default = false,
+  Callback = function(v)
+      TeamCheck = v
+  end
+})
+
+TabPVP:AddToggle({
+  Name = "Ocultar FOV",
+  Default = false,
+  Callback = function(v)
+      OcultarFOV = v
+  end
+})
+
+TabPVP:AddToggle({
+  Name = "FOV Colorido",
+  Default = false,
+  Callback = function(v)
+      FOVColorido = v
+      if not v then FOVColor = Color3.fromRGB(0,255,0) end
+  end
+})
+
+TabPVP:AddToggle({
+  Name = "Prio Menos Vida",
+  Default = false,
+  Callback = function(v)
+      PriorizarMenosVida = v
+  end
+})
+
+TabPVP:AddToggle({
+  Name = "Prio Mais Perto",
+  Default = false,
+  Callback = function(v)
+      PriorizarMaisPerto = v
+  end
+})
+
+TabPVP:AddSlider({
+  Name = "Tamanho FOV",
+  Min = 1,
+  Max = 600,
+  Increase = 1,
+  Default = 100,
+  Callback = function(v)
+      FOVRadius = v
+  end
+})
+
+TabPVP:AddDropdown({
+  Name = "Ignorar Jogadores",
+  Options = {"Nenhum"},
+  Default = "Nenhum",
+  Callback = function(Option)
+      if Option == "Nenhum" then
+          IgnoredPlayers = {}
+      else
+          IgnoredPlayers = {Option}
+      end
+  end
+})
+
+TabPVP:AddDropdown({
+  Name = "Priorizar Jogadores",
+  Options = {"Nenhum"},
+  Default = "Nenhum",
+  Callback = function(Option)
+      if Option == "Nenhum" then
+          PriorizarJogadores = {}
+      else
+          PriorizarJogadores = {Option}
+      end
+  end
+})
+
+TabPVP:AddButton({"Puxar Todos", function()
+    loadstring(game:HttpGet("https://raw.githubusercontent.com/Fx-login/Bring-all/refs/heads/main/Bring%20all%20sintonia"))()
+end})
